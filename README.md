@@ -11,3 +11,7 @@ Aufgabe 2
 - Aus den Predictions wird eine Confusion Matrix erzeugt.
 - Die eigene json Datei und die zugehörigen Bilder sind im Ordner 02-dataset/anja_images
 - Die Confusion Matrix ist unter 02-dataset/conf-matrix.png zu finden.
+
+Aufgabe 3
+
+- In 03-media_control/media_control.py lassen sich über die Gesten Like (Volume Up), Dislike (Volume Down) und Stop (Pause Track) der Track steuern.
