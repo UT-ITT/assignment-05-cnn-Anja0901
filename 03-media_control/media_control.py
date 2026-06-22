@@ -24,13 +24,14 @@ from tqdm import tqdm
 
 # Try to import pynput for media control
 try:
-    from pynput.media_control import Controller as MediaController
-    from pynput.media_control import MediaKey
-    PYNPUT_AVAILABLE = True
-except ImportError:
-    print("WARNING: pynput not installed. Media controls will not work.")
-    print("Install with: pip install pynput")
-    PYNPUT_AVAILABLE = False
+    import pyautogui
+    MEDIAKEYS_AVAILABLE = True
+except Exception as e:
+    print(type(e))
+    print(e)
+    print("WARNING: pyautogui not installed. Media controls will not work.")
+    print("Install with: pip install pyautogui")
+    MEDIAKEYS_AVAILABLE = False
 
 # ============================================================================
 # CONFIGURATION
@@ -55,7 +56,7 @@ DATASET_PATH = '../gesture_dataset_sample'
 MODEL_PATH = './gesture_recognition.keras'
 
 # Real-time inference configuration
-CONFIDENCE_THRESHOLD = 0.6  # Minimum confidence to register a gesture
+CONFIDENCE_THRESHOLD = 0.8  # Minimum confidence to register a gesture
 NO_GESTURE_FRAMES = 3  # Frames to wait before sending "no gesture"
 INFERENCE_SKIP_FRAMES = 2  # Process every Nth frame for latency optimization
 
@@ -219,6 +220,14 @@ def train_model(images, labels, label_names, model_path):
     # Save model
     model.save(model_path)
     print(f"Model saved to {model_path}")
+    # Save label names alongside the model so we can load the exact mapping later
+    try:
+        labels_path = f"{model_path}.labels.json"
+        with open(labels_path, 'w') as lf:
+            json.dump(label_names, lf)
+        print(f"Label mapping saved to {labels_path}")
+    except Exception:
+        print("Warning: Failed to save label mapping file")
     
     # Evaluate
     loss, accuracy = model.evaluate(X_test, y_test_one_hot)
@@ -233,7 +242,16 @@ def load_model(model_path, label_names_path=None):
         return None, None
     
     model = tf.keras.models.load_model(model_path)
-    label_names = CONDITIONS  # Default to CONDITIONS if no mapping available
+    # Try to load saved label mapping created during training
+    labels_path = f"{model_path}.labels.json"
+    if os.path.exists(labels_path):
+        try:
+            with open(labels_path) as lf:
+                label_names = json.load(lf)
+        except Exception:
+            label_names = CONDITIONS
+    else:
+        label_names = CONDITIONS  # Default to CONDITIONS if no mapping available
     
     return model, label_names
 
@@ -277,14 +295,23 @@ class GestureRecognizer:
         
         # Get prediction
         prediction = self.model.predict(input_data, verbose=0)
-        confidence = np.max(prediction)
-        predicted_label = np.argmax(prediction)
-        
-        if predicted_label in self.label_names:
+        confidence = float(np.max(prediction))
+        predicted_label = int(np.argmax(prediction))
+
+        # Guard: if model returns a class index outside of label_names range,
+        # fall back to best-effort mapping using CONDITIONS, and ignore if still invalid
+        if predicted_label < 0 or predicted_label >= len(self.label_names):
+            print(f"Warning: predicted label {predicted_label} out of range for label_names (len={len(self.label_names)})")
+            # try to recover by using CONDITIONS mapping if lengths match
+            if predicted_label < len(CONDITIONS):
+                gesture = CONDITIONS[predicted_label]
+            else:
+                gesture = None
+        else:
             gesture = self.label_names[predicted_label]
         
         # Only register gesture if confidence is high enough
-        if predicted_label in self.label_names and confidence >= CONFIDENCE_THRESHOLD:
+        if confidence >= CONFIDENCE_THRESHOLD:
             self.last_prediction = (gesture, confidence)
             self.no_gesture_counter = 0
         else:
@@ -299,10 +326,6 @@ class MediaControlHandler:
     """Handle media control commands"""
     
     def __init__(self):
-        if PYNPUT_AVAILABLE:
-            self.controller = MediaController()
-        else:
-            self.controller = None
         self.last_action_time = 0
         self.action_cooldown = 0.5  # Minimum time between actions (seconds)
     
@@ -314,19 +337,19 @@ class MediaControlHandler:
         if current_time - self.last_action_time < self.action_cooldown:
             return
         
-        if not PYNPUT_AVAILABLE:
+        if not MEDIAKEYS_AVAILABLE:
             print(f"[Would execute] {action}")
             return
         
         try:
             if action == 'volume_up':
-                self.controller.volume_up()
+                pyautogui.press('volumeup')
                 print(f"↑ Volume Up")
             elif action == 'volume_down':
-                self.controller.volume_down()
+                pyautogui.press('volumedown')
                 print(f"↓ Volume Down")
             elif action == 'pause':
-                self.controller.pause()
+                pyautogui.press('playpause')
                 print(f"⏸ Pause/Play")
             
             self.last_action_time = current_time
@@ -341,8 +364,8 @@ class MediaControlHandler:
 def run_media_controller(model, label_names, use_fixed_roi=True):
     """Run real-time media controller from camera"""
     
-    if not PYNPUT_AVAILABLE:
-        print("\nNote: pynput not available. Actions will only be printed to console.")
+    if not MEDIAKEYS_AVAILABLE:
+        print("\nNote: pyautogui not available. Actions will only be printed to console.")
     
     recognizer = GestureRecognizer(model, label_names)
     media_handler = MediaControlHandler()
